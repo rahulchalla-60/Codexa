@@ -1,46 +1,85 @@
-// src/indexer.ts
 import Parser from 'tree-sitter';
 import fs from 'fs';
 import path from 'path';
+import { initDb, resetDb, insertSymbol, insertEdge, findUpstreamCallers } from './db/db';
 
-// Load the TypeScript grammar
 const TypeScript = require('tree-sitter-typescript').typescript;
 
 async function main() {
-  // Initialize the parser
+  // 1. Initialize and clear DB for a clean index run
+  initDb();
+  resetDb();
+
+  // 2. Initialize Parser
   const parser = new Parser();
   parser.setLanguage(TypeScript);
 
-  // Read our sample source code file
+  // 3. Read sample file
   const samplePath = path.join(__dirname, '../sample.ts');
   const sourceCode = fs.readFileSync(samplePath, 'utf8');
 
-  // Parse the code into an AST
+  // 4. Parse AST
   const tree = parser.parse(sourceCode);
 
-  console.log('--- Full AST Structure ---');
-  console.log(tree.rootNode.toString());
+  console.log('--- 1. Indexing Source File Into Database ---');
+  indexFile(tree.rootNode, samplePath);
 
-  console.log('\n--- Extracted Symbols (Phase 1 Goal) ---');
-  extractFunctions(tree.rootNode);
+  console.log('Symbols and Edges populated successfully into SQLite graph database.');
+
+  console.log('\n--- 2. Running Graph Traversal Query (Recursive CTE) ---');
+  const targetFunction = 'calculateBlastRadius';
+  console.log(`Query: "What functions break if '${targetFunction}' is modified?"`);
+
+  const callers = findUpstreamCallers(targetFunction);
+  console.log('\nResult (Upstream Impact / Blast Radius):');
+  console.table(callers);
 }
 
-// A simple manual traversal to find function names
-function extractFunctions(node: Parser.SyntaxNode) {
-  // Check if this node is a function declaration
+let currentScopeFunction: string | null = null;
+
+function indexFile(node: Parser.SyntaxNode, filePath: string) {
+  // Check for function declarations (Symbols)
   if (node.type === 'function_declaration') {
-    // The name of the function is usually a child node called 'identifier'
     const nameNode = node.children.find(child => child.type === 'identifier');
     if (nameNode) {
-      console.log(`Found function: '${nameNode.text}' on line ${nameNode.startPosition.row + 1}`);
+      const funcName = nameNode.text;
+      insertSymbol(
+        funcName,
+        filePath,
+        'function',
+        nameNode.startPosition.row + 1,
+        nameNode.endPosition.row + 1
+      );
+      
+      const previousScope = currentScopeFunction;
+      currentScopeFunction = funcName;
+
+      // Parse body for calls inside this function
+      for (let i = 0; i < node.childCount; i++) {
+        const child = node.child(i);
+        if (child) indexFile(child, filePath);
+      }
+
+      currentScopeFunction = previousScope;
+      return;
     }
   }
 
-  // Recursively check all children
+  // Check for function call invocations (Edges)
+  if (node.type === 'call_expression' && currentScopeFunction) {
+    const functionNode = node.childForFieldName('function');
+    if (functionNode && functionNode.type === 'identifier') {
+      const calledFuncName = functionNode.text;
+      // Record edge: currentScopeFunction -> calls -> calledFuncName
+      insertEdge(currentScopeFunction, calledFuncName, 'calls');
+    }
+  }
+
+  // Traverse all children recursively
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (child) {
-      extractFunctions(child);
+      indexFile(child, filePath);
     }
   }
 }
