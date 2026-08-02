@@ -38,6 +38,15 @@ export function initDb() {
       target_symbol_name TEXT NOT NULL,
       type TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS incidents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      root_cause_endpoint TEXT,
+      root_cause_symbol TEXT
+    );
   `);
 }
 
@@ -47,6 +56,7 @@ export function resetDb() {
     DROP TABLE IF EXISTS edges;
     DROP TABLE IF EXISTS endpoints;
     DROP TABLE IF EXISTS repos;
+    DROP TABLE IF EXISTS incidents;
   `);
   initDb();
 }
@@ -88,6 +98,20 @@ export function insertEdge(
   stmt.run(sourceRepo, sourceSymbolName, targetRepo, targetSymbolName, type);
 }
 
+export function insertIncident(
+  title: string,
+  occurredAt: string,
+  severity: string,
+  rootCauseEndpoint?: string,
+  rootCauseSymbol?: string
+) {
+  const stmt = db.prepare(`
+    INSERT INTO incidents (title, occurred_at, severity, root_cause_endpoint, root_cause_symbol)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  stmt.run(title, occurredAt, severity, rootCauseEndpoint || null, rootCauseSymbol || null);
+}
+
 export function findUpstreamCallers(targetSymbolName: string, targetRepo: string = 'all') {
   const stmt = db.prepare(`
     WITH RECURSIVE CallChain AS (
@@ -110,12 +134,17 @@ export function findUpstreamCallers(targetSymbolName: string, targetRepo: string
   return stmt.all(targetSymbolName, targetRepo, targetRepo);
 }
 
-export function findEndpointImpact(endpointPath: string, method: string) {
+export function findIncidentCorrelation(endpointContract?: string, symbolName?: string) {
   const stmt = db.prepare(`
-    SELECT e.source_repo, e.source_symbol_name, ep.repo_name as endpoint_repo, ep.path as endpoint_path, ep.method
-    FROM endpoints ep
-    JOIN edges e ON e.target_symbol_name = (ep.method || ' ' || ep.path)
-    WHERE ep.path = ? AND ep.method = ?
+    SELECT id, title, occurred_at, severity, root_cause_endpoint, root_cause_symbol
+    FROM incidents
+    WHERE (? IS NOT NULL AND root_cause_endpoint = ?)
+       OR (? IS NOT NULL AND root_cause_symbol = ?)
   `);
-  return stmt.all(endpointPath, method.toUpperCase());
+  return stmt.all(
+    endpointContract || null,
+    endpointContract || null,
+    symbolName || null,
+    symbolName || null
+  );
 }

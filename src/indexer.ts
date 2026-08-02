@@ -8,8 +8,12 @@ import {
   insertSymbol,
   insertEndpoint,
   insertEdge,
+  insertIncident,
   findUpstreamCallers
 } from './db/db';
+import { mapDiffToEntities } from './analyzer/diffMapper';
+import { evaluatePRRisk } from './analyzer/riskEngine';
+import { formatPRComment } from './analyzer/commentFormatter';
 
 const TypeScript = require('tree-sitter-typescript').typescript;
 
@@ -35,16 +39,44 @@ async function main() {
   indexRepo(parser, 'web-dashboard', frontendRepoPath);
 
   console.log('\n========================================================');
-  console.log('--- 2. Phase 2 Cross-Repo Endpoint Impact Analysis ---');
+  console.log('--- 2. Ingesting Historical Incident Memory (PagerDuty) ---');
   console.log('========================================================\n');
 
-  const targetEndpointContract = 'POST /v1/charge';
-  console.log(`SCENARIO: A breaking schema change is introduced to Endpoint: '${targetEndpointContract}' in 'payment-service'.`);
-  console.log(`QUERY: "Which upstream symbols across ALL repos will break?"\n`);
+  console.log('Ingesting Incident #482: "Payment Gateway Timeout Outage" (March 2026) -> Root cause: POST /v1/charge');
+  insertIncident(
+    'Payment Gateway Timeout Outage',
+    'March 2026',
+    'CRITICAL',
+    'POST /v1/charge',
+    'processCharge'
+  );
 
-  const blastRadius = findUpstreamCallers(targetEndpointContract);
-  console.log('RESULT (Cross-Repository Blast Radius):');
-  console.table(blastRadius);
+  console.log('\n========================================================');
+  console.log('--- 3. Phase 4 Simulated Pull Request Risk Analysis ---');
+  console.log('========================================================\n');
+
+  console.log('Simulating PR #42 in "payment-service": Editing "routes.ts" (Lines 2-5)...\n');
+
+  const simulatedDiff = [
+    {
+      repoName: 'payment-service',
+      filePath: 'src/routes.ts',
+      startLine: 2,
+      endLine: 5
+    }
+  ];
+
+  // 1. Map diff to DB symbols
+  const touchedEntities = mapDiffToEntities(simulatedDiff);
+
+  // 2. Evaluate Risk Score, Blast Radius & Incident Correlation
+  const report = evaluatePRRisk(touchedEntities);
+
+  // 3. Format GitHub PR Comment with Institutional Memory
+  const prComment = formatPRComment(report);
+
+  console.log('--- GENERATED GITHUB PR COMMENT ---');
+  console.log(prComment);
 }
 
 function indexRepo(parser: Parser, repoName: string, repoDir: string) {
@@ -151,17 +183,15 @@ function indexFile(node: Parser.SyntaxNode, repoName: string, filePath: string) 
         if (pathArg) {
           const routePath = pathArg.text.replace(/['"]/g, '');
           
-          let method = 'POST'; // Default or extracted from second arg
+          let method = 'POST';
           const contractSymbol = `${method} ${routePath}`;
 
           console.log(`  └─ Consuming Endpoint [${contractSymbol}] inside '${currentScopeFunction}'`);
 
-          // Cross-repo edge: currentScopeFunction (web-dashboard) -> calls -> contractSymbol (payment-service)
           insertEdge(repoName, currentScopeFunction, 'payment-service', contractSymbol, 'consumes_endpoint');
         }
       }
     } else if (functionNode && functionNode.type === 'identifier') {
-      // Standard function call inside the same repo
       const calledFunc = functionNode.text;
       insertEdge(repoName, currentScopeFunction, repoName, calledFunc, 'calls');
     }
