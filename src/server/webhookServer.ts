@@ -3,6 +3,7 @@ import { mapDiffToEntities } from '../analyzer/diffMapper';
 import { evaluatePRRisk } from '../analyzer/riskEngine';
 import { formatPRComment } from '../analyzer/commentFormatter';
 import { parseGitHubWebhookPayload, postGitHubPRComment } from '../services/githubService';
+import { generateGroqAISummary } from '../services/llmService';
 
 export function buildServer() {
   const fastify = Fastify({ logger: false });
@@ -29,10 +30,13 @@ export function buildServer() {
     // 3. Evaluate Risk Score & Incident Correlation
     const report = evaluatePRRisk(touchedEntities);
 
-    // 4. Format PR Comment Markdown
-    const commentMarkdown = formatPRComment(report);
+    // 4. Generate Groq AI Executive Summary (if GROQ_API_KEY present)
+    const aiSummary = await generateGroqAISummary(report);
 
-    // 5. Post comment to GitHub API / Dry-run
+    // 5. Format PR Comment Markdown
+    const commentMarkdown = formatPRComment(report, aiSummary);
+
+    // 6. Post comment to GitHub API / Dry-run
     const success = await postGitHubPRComment(
       repoOwner,
       repoName,
@@ -48,6 +52,7 @@ export function buildServer() {
       riskScore: report.riskScore,
       impactedCallersCount: report.impactedCallers.length,
       matchedIncidentsCount: report.matchedIncidents.length,
+      aiSummaryActive: !!aiSummary,
       commentMarkdown
     });
   });

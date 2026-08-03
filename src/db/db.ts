@@ -32,10 +32,8 @@ export function initDb() {
 
     CREATE TABLE IF NOT EXISTS edges (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      source_repo TEXT NOT NULL,
-      source_symbol_name TEXT NOT NULL,
-      target_repo TEXT NOT NULL,
-      target_symbol_name TEXT NOT NULL,
+      source_signature TEXT NOT NULL,
+      target_signature TEXT NOT NULL,
       type TEXT NOT NULL
     );
 
@@ -117,17 +115,15 @@ export function insertEndpoint(repoName: string, method: string, routePath: stri
 }
 
 export function insertEdge(
-  sourceRepo: string,
-  sourceSymbolName: string,
-  targetRepo: string,
-  targetSymbolName: string,
+  sourceSignature: string,
+  targetSignature: string,
   type: string = 'calls'
 ) {
   const stmt = db.prepare(`
-    INSERT INTO edges (source_repo, source_symbol_name, target_repo, target_symbol_name, type)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO edges (source_signature, target_signature, type)
+    VALUES (?, ?, ?)
   `);
-  stmt.run(sourceRepo, sourceSymbolName, targetRepo, targetSymbolName, type);
+  stmt.run(sourceSignature, targetSignature, type);
 }
 
 export function insertIncident(
@@ -188,26 +184,24 @@ export function insertEntityHistory(
   stmt.run(entitySignature, eventType, timestamp, actor, description);
 }
 
-export function findUpstreamCallers(targetSymbolName: string, targetRepo: string = 'all') {
+export function findUpstreamCallers(targetSignature: string) {
   const stmt = db.prepare(`
     WITH RECURSIVE CallChain AS (
-      SELECT source_repo, source_symbol_name, target_repo, target_symbol_name, 1 as depth
+      SELECT source_signature, target_signature, 1 as depth
       FROM edges
-      WHERE target_symbol_name = ?
-        AND (? = 'all' OR target_repo = ?)
+      WHERE target_signature = ?
       
       UNION ALL
       
-      SELECT e.source_repo, e.source_symbol_name, e.target_repo, e.target_symbol_name, cc.depth + 1
+      SELECT e.source_signature, e.target_signature, cc.depth + 1
       FROM edges e
       INNER JOIN CallChain cc 
-        ON e.target_symbol_name = cc.source_symbol_name
-       AND e.target_repo = cc.source_repo
+        ON e.target_signature = cc.source_signature
       WHERE cc.depth < 10
     )
-    SELECT DISTINCT source_repo, source_symbol_name, depth FROM CallChain;
+    SELECT DISTINCT source_signature, depth FROM CallChain;
   `);
-  return stmt.all(targetSymbolName, targetRepo, targetRepo);
+  return stmt.all(targetSignature);
 }
 
 export function findIncidentCorrelation(endpointContract?: string, symbolName?: string) {

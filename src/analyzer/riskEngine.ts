@@ -6,7 +6,9 @@ import { queryWhyCodeExists, KnowledgeNoteResult, getEntityTimeline, TimelineEve
 export interface ImpactedCaller {
   source_repo: string;
   source_symbol_name: string;
+  source_signature: string;
   depth: number;
+  weight: number;
 }
 
 export interface IncidentRecord {
@@ -45,11 +47,27 @@ export function evaluatePRRisk(touchedEntities: TouchedEntity[]): RiskAnalysisRe
     if (entity.endpointPath && entity.endpointMethod) {
       isEndpointModified = true;
       contract = `${entity.endpointMethod} ${entity.endpointPath}`;
-      const callers = findUpstreamCallers(contract) as ImpactedCaller[];
-      allImpactedCallers.push(...callers);
-    } else {
-      const callers = findUpstreamCallers(entity.symbolName, entity.repoName) as ImpactedCaller[];
-      allImpactedCallers.push(...callers);
+    }
+
+    const targetSig = entity.entitySignature;
+
+    // Traverse recursive CTE graph using composite signature
+    const rawCallers = findUpstreamCallers(targetSig) as any[];
+    for (const caller of rawCallers) {
+      const sigParts = caller.source_signature.split('::');
+      const sourceRepo = sigParts[0] || entity.repoName;
+      const sourceSymbol = sigParts.length >= 3 ? sigParts[2] : caller.source_signature;
+
+      // Depth decay weighting: Depth 1 = 1.0, Depth 2 = 0.5, Depth 3+ = 0.2
+      const weight = caller.depth === 1 ? 1.0 : caller.depth === 2 ? 0.5 : 0.2;
+
+      allImpactedCallers.push({
+        source_repo: sourceRepo,
+        source_symbol_name: sourceSymbol,
+        source_signature: caller.source_signature,
+        depth: caller.depth,
+        weight
+      });
     }
 
     // Incident correlation search
@@ -62,23 +80,21 @@ export function evaluatePRRisk(touchedEntities: TouchedEntity[]): RiskAnalysisRe
     const owner = getOwnerTeam(entity.symbolName, entity.repoName, entity.filePath);
     ownerships.push(owner);
 
-    // Knowledge & Timeline resolution using stable signature
-    const stableSig = contract || `${entity.repoName}::${entity.symbolName}`;
-    const kNote = queryWhyCodeExists(stableSig);
+    // Knowledge & Timeline resolution using composite signature
+    const kNote = queryWhyCodeExists(targetSig);
     if (kNote.confidence !== 'LOW') {
       knowledgeNotes.push(kNote);
     }
 
-    const history = getEntityTimeline(stableSig);
+    const history = getEntityTimeline(targetSig);
     timelines.push(...history);
   }
 
-  // Deduplicate callers
+  // Deduplicate callers by composite signature
   const uniqueCallersMap = new Map<string, ImpactedCaller>();
   for (const caller of allImpactedCallers) {
-    const key = `${caller.source_repo}:${caller.source_symbol_name}`;
-    if (!uniqueCallersMap.has(key)) {
-      uniqueCallersMap.set(key, caller);
+    if (!uniqueCallersMap.has(caller.source_signature)) {
+      uniqueCallersMap.set(caller.source_signature, caller);
     }
   }
   const uniqueCallers = Array.from(uniqueCallersMap.values());
@@ -89,13 +105,15 @@ export function evaluatePRRisk(touchedEntities: TouchedEntity[]): RiskAnalysisRe
   uniqueCallers.forEach(c => affectedReposSet.add(c.source_repo));
   const affectedRepos = Array.from(affectedReposSet);
 
-  // Risk Scoring Algorithm
+  // Depth-Weighted Risk Scoring Algorithm
   let riskScore = 10;
   if (isEndpointModified) riskScore += 40;
   if (affectedRepos.length > 1) riskScore += 35;
   if (matchedIncidents.length > 0) riskScore += 30;
 
-  riskScore += Math.min(uniqueCallers.length * 5, 15);
+  // Add depth-weighted caller score
+  const totalWeightedCallersScore = uniqueCallers.reduce((sum, c) => sum + (c.weight * 10), 0);
+  riskScore += Math.min(totalWeightedCallersScore, 25);
 
   let riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' = 'LOW';
   if (riskScore >= 70) {
@@ -113,7 +131,7 @@ export function evaluatePRRisk(touchedEntities: TouchedEntity[]): RiskAnalysisRe
     timelines,
     affectedRepos,
     riskLevel,
-    riskScore: Math.min(riskScore, 100),
+    riskScore: Math.min(Math.round(riskScore), 100),
     isEndpointModified
   };
 }

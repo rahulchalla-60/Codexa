@@ -1,9 +1,15 @@
 import { RiskAnalysisReport } from './riskEngine';
 
-export function formatPRComment(report: RiskAnalysisReport): string {
+export function formatPRComment(report: RiskAnalysisReport, aiSummary?: string | null): string {
   const badgeEmoji = report.riskLevel === 'HIGH' ? '🔴' : report.riskLevel === 'MEDIUM' ? '🟡' : '🟢';
 
   let markdown = `## ${badgeEmoji} Codexa Risk & Memory Report: ${report.riskLevel} RISK (Score: ${report.riskScore}/100)\n\n`;
+
+  // Render Groq AI Executive Summary if available
+  if (aiSummary) {
+    markdown += `### 🤖 Groq AI Executive Summary\n`;
+    markdown += `> ${aiSummary}\n\n`;
+  }
 
   markdown += `### 🎯 Touched Symbols & API Contracts\n`;
   for (const entity of report.touchedEntities) {

@@ -4,7 +4,7 @@
   "description": "An Engineering Memory Platform that parses codebases into a dependency graph to proactively detect breaking changes and correlate past incidents directly on Pull Requests.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "tsx --test tests/**/*.test.ts",
     "start": "tsx src/indexer.ts",
     "server": "tsx src/server/startServer.ts"
   },
@@ -26,6 +26,7 @@
     "better-sqlite3": "^13.0.2",
     "dotenv": "^17.4.2",
     "fastify": "^5.11.0",
+    "groq-sdk": "^1.5.0",
     "tree-sitter": "^0.21.1",
     "tree-sitter-typescript": "^0.23.2",
     "tsx": "^4.23.1",

@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { insertTeamOwnership, findTeamOwnership } from '../db/db';
 
 export interface OwnershipResult {
@@ -6,6 +8,28 @@ export interface OwnershipResult {
   confidence: 'HIGH' | 'MEDIUM' | 'LOW';
   source: string;
   evidenceExplanation: string;
+}
+
+export function ingestRepoCodeowners(repoName: string, repoDir: string) {
+  const possiblePaths = [
+    path.join(repoDir, '.github', 'CODEOWNERS'),
+    path.join(repoDir, 'CODEOWNERS'),
+    path.join(repoDir, 'docs', 'CODEOWNERS')
+  ];
+
+  for (const filePath of possiblePaths) {
+    if (fs.existsSync(filePath)) {
+      try {
+        console.log(`  └─ Ingested disk CODEOWNERS at: ${filePath}`);
+        const content = fs.readFileSync(filePath, 'utf8');
+        parseAndRegisterCodeowners(repoName, content);
+        return;
+      } catch (err: any) {
+        console.warn(`[CODEOWNERS Warning]: Failed to read ${filePath}: ${err.message}`);
+      }
+    }
+  }
+  console.log(`  └─ No CODEOWNERS file found on disk for repository '${repoName}'`);
 }
 
 export function parseAndRegisterCodeowners(repoName: string, codeownersContent: string) {
@@ -34,23 +58,36 @@ export function getOwnerTeam(symbolName: string, repoName: string, filePath?: st
       ownerHandle: '@unassigned',
       confidence: 'LOW',
       source: 'NO_CODEOWNERS_FILE',
-      evidenceExplanation: `No CODEOWNERS record was found for repository '${repoName}'.`
+      evidenceExplanation: `No CODEOWNERS file exists on disk for repository '${repoName}'.`
     };
   }
 
-  // Exact file pattern match
+  // File pattern matching with glob support
   if (filePath) {
     const normalizedFile = filePath.replace(/\\/g, '/').toLowerCase();
+    
     for (const entry of ownershipEntries) {
       const pattern = entry.file_pattern.replace(/\\/g, '/').toLowerCase();
-      if (pattern !== '*' && normalizedFile.includes(pattern)) {
-        return {
-          teamName: entry.team_name,
-          ownerHandle: entry.owner_handle,
-          confidence: 'HIGH',
-          source: entry.source,
-          evidenceExplanation: `Matched specific file rule '${entry.file_pattern}' in repository '${repoName}'.`
-        };
+      
+      if (pattern !== '*') {
+        // Convert glob pattern (e.g. src/routes.ts or src/payment/*.ts) to Regex
+        const cleanPattern = pattern.replace(/^\//, '');
+        const regexPattern = new RegExp(
+          cleanPattern
+            .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+            .replace(/\*/g, '.*'),
+          'i'
+        );
+
+        if (regexPattern.test(normalizedFile) || normalizedFile.includes(cleanPattern.replace(/\.\*/g, '').replace(/\*/g, ''))) {
+          return {
+            teamName: entry.team_name,
+            ownerHandle: entry.owner_handle,
+            confidence: 'HIGH',
+            source: entry.source,
+            evidenceExplanation: `Matched specific file rule '${entry.file_pattern}' in repository '${repoName}'.`
+          };
+        }
       }
     }
   }
