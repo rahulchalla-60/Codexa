@@ -47,6 +47,35 @@ export function initDb() {
       root_cause_endpoint TEXT,
       root_cause_symbol TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS team_ownership (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      repo_name TEXT NOT NULL,
+      file_pattern TEXT NOT NULL,
+      team_name TEXT NOT NULL,
+      owner_handle TEXT NOT NULL,
+      source TEXT NOT NULL,
+      confidence TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS knowledge_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_signature TEXT NOT NULL,
+      question TEXT NOT NULL,
+      answer TEXT NOT NULL,
+      source TEXT NOT NULL,
+      confidence TEXT NOT NULL,
+      last_updated TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS entity_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_signature TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      actor TEXT NOT NULL,
+      description TEXT NOT NULL
+    );
   `);
 }
 
@@ -57,6 +86,9 @@ export function resetDb() {
     DROP TABLE IF EXISTS endpoints;
     DROP TABLE IF EXISTS repos;
     DROP TABLE IF EXISTS incidents;
+    DROP TABLE IF EXISTS team_ownership;
+    DROP TABLE IF EXISTS knowledge_notes;
+    DROP TABLE IF EXISTS entity_history;
   `);
   initDb();
 }
@@ -112,6 +144,50 @@ export function insertIncident(
   stmt.run(title, occurredAt, severity, rootCauseEndpoint || null, rootCauseSymbol || null);
 }
 
+export function insertTeamOwnership(
+  repoName: string,
+  filePattern: string,
+  teamName: string,
+  ownerHandle: string,
+  source: string = 'CODEOWNERS',
+  confidence: string = 'HIGH'
+) {
+  const stmt = db.prepare(`
+    INSERT INTO team_ownership (repo_name, file_pattern, team_name, owner_handle, source, confidence)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  stmt.run(repoName, filePattern, teamName, ownerHandle, source, confidence);
+}
+
+export function insertKnowledgeNote(
+  entitySignature: string,
+  question: string,
+  answer: string,
+  source: string,
+  confidence: string = 'HIGH',
+  lastUpdated: string = new Date().toISOString().split('T')[0]
+) {
+  const stmt = db.prepare(`
+    INSERT INTO knowledge_notes (entity_signature, question, answer, source, confidence, last_updated)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  stmt.run(entitySignature, question, answer, source, confidence, lastUpdated);
+}
+
+export function insertEntityHistory(
+  entitySignature: string,
+  eventType: string,
+  timestamp: string,
+  actor: string,
+  description: string
+) {
+  const stmt = db.prepare(`
+    INSERT INTO entity_history (entity_signature, event_type, timestamp, actor, description)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  stmt.run(entitySignature, eventType, timestamp, actor, description);
+}
+
 export function findUpstreamCallers(targetSymbolName: string, targetRepo: string = 'all') {
   const stmt = db.prepare(`
     WITH RECURSIVE CallChain AS (
@@ -147,4 +223,32 @@ export function findIncidentCorrelation(endpointContract?: string, symbolName?: 
     symbolName || null,
     symbolName || null
   );
+}
+
+export function findTeamOwnership(repoName: string) {
+  const stmt = db.prepare(`
+    SELECT repo_name, file_pattern, team_name, owner_handle, source, confidence
+    FROM team_ownership
+    WHERE repo_name = ?
+  `);
+  return stmt.all(repoName);
+}
+
+export function findKnowledgeNotes(entitySignature: string) {
+  const stmt = db.prepare(`
+    SELECT entity_signature, question, answer, source, confidence, last_updated
+    FROM knowledge_notes
+    WHERE entity_signature = ?
+  `);
+  return stmt.all(entitySignature);
+}
+
+export function findEntityHistory(entitySignature: string) {
+  const stmt = db.prepare(`
+    SELECT entity_signature, event_type, timestamp, actor, description
+    FROM entity_history
+    WHERE entity_signature = ?
+    ORDER BY timestamp ASC
+  `);
+  return stmt.all(entitySignature);
 }

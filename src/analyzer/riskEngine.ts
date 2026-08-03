@@ -1,5 +1,7 @@
 import { TouchedEntity } from './diffMapper';
 import { findUpstreamCallers, findIncidentCorrelation } from '../db/db';
+import { getOwnerTeam, OwnershipResult } from '../memory/ownershipResolver';
+import { queryWhyCodeExists, KnowledgeNoteResult, getEntityTimeline, TimelineEvent } from '../memory/knowledgeEngine';
 
 export interface ImpactedCaller {
   source_repo: string;
@@ -20,6 +22,9 @@ export interface RiskAnalysisReport {
   touchedEntities: TouchedEntity[];
   impactedCallers: ImpactedCaller[];
   matchedIncidents: IncidentRecord[];
+  ownerships: OwnershipResult[];
+  knowledgeNotes: KnowledgeNoteResult[];
+  timelines: TimelineEvent[];
   affectedRepos: string[];
   riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
   riskScore: number;
@@ -29,6 +34,10 @@ export interface RiskAnalysisReport {
 export function evaluatePRRisk(touchedEntities: TouchedEntity[]): RiskAnalysisReport {
   const allImpactedCallers: ImpactedCaller[] = [];
   const matchedIncidentsMap = new Map<number, IncidentRecord>();
+  const ownerships: OwnershipResult[] = [];
+  const knowledgeNotes: KnowledgeNoteResult[] = [];
+  const timelines: TimelineEvent[] = [];
+
   let isEndpointModified = false;
 
   for (const entity of touchedEntities) {
@@ -48,6 +57,20 @@ export function evaluatePRRisk(touchedEntities: TouchedEntity[]): RiskAnalysisRe
     for (const inc of incidents) {
       matchedIncidentsMap.set(inc.id, inc);
     }
+
+    // CODEOWNERS ownership resolution
+    const owner = getOwnerTeam(entity.symbolName, entity.repoName, entity.filePath);
+    ownerships.push(owner);
+
+    // Knowledge & Timeline resolution using stable signature
+    const stableSig = contract || `${entity.repoName}::${entity.symbolName}`;
+    const kNote = queryWhyCodeExists(stableSig);
+    if (kNote.confidence !== 'LOW') {
+      knowledgeNotes.push(kNote);
+    }
+
+    const history = getEntityTimeline(stableSig);
+    timelines.push(...history);
   }
 
   // Deduplicate callers
@@ -70,7 +93,7 @@ export function evaluatePRRisk(touchedEntities: TouchedEntity[]): RiskAnalysisRe
   let riskScore = 10;
   if (isEndpointModified) riskScore += 40;
   if (affectedRepos.length > 1) riskScore += 35;
-  if (matchedIncidents.length > 0) riskScore += 30; // Historical incident memory penalty
+  if (matchedIncidents.length > 0) riskScore += 30;
 
   riskScore += Math.min(uniqueCallers.length * 5, 15);
 
@@ -85,6 +108,9 @@ export function evaluatePRRisk(touchedEntities: TouchedEntity[]): RiskAnalysisRe
     touchedEntities,
     impactedCallers: uniqueCallers,
     matchedIncidents,
+    ownerships,
+    knowledgeNotes,
+    timelines,
     affectedRepos,
     riskLevel,
     riskScore: Math.min(riskScore, 100),

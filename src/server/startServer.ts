@@ -9,14 +9,17 @@ import {
   insertSymbol,
   insertEndpoint,
   insertEdge,
-  insertIncident
+  insertIncident,
+  insertKnowledgeNote,
+  insertEntityHistory
 } from '../db/db';
+import { parseAndRegisterCodeowners } from '../memory/ownershipResolver';
 import { buildServer } from './webhookServer';
 
 const TypeScript = require('tree-sitter-typescript').typescript;
 
 async function start() {
-  console.log('--- Setting Up Database Graph & Indexing Repositories ---');
+  console.log('--- Setting Up Database Graph & Deep Memory Storage ---');
   initDb();
   resetDb();
 
@@ -25,13 +28,19 @@ async function start() {
 
   const mockReposDir = path.join(__dirname, '../../mock_repos');
 
-  // Index payment-service
+  // 1. Index Repositories
   indexRepo(parser, 'payment-service', path.join(mockReposDir, 'payment-service'));
-
-  // Index web-dashboard
   indexRepo(parser, 'web-dashboard', path.join(mockReposDir, 'web-dashboard'));
 
-  // Seed incident memory
+  // 2. Ingest CODEOWNERS
+  console.log('--- Registering CODEOWNERS Rules ---');
+  parseAndRegisterCodeowners('payment-service', `
+src/routes.ts @payments-squad
+* @core-backend-team
+  `);
+
+  // 3. Seed Incident Memory
+  console.log('--- Ingesting Incident Postmortems ---');
   insertIncident(
     'Payment Gateway Timeout Outage',
     'March 2026',
@@ -40,17 +49,43 @@ async function start() {
     'processCharge'
   );
 
-  // Build and start Fastify Server
+  // 4. Seed Knowledge Notes (Jira / Slack context)
+  console.log('--- Ingesting Knowledge Notes (Jira PAY-101) ---');
+  insertKnowledgeNote(
+    'POST /v1/charge',
+    'Why was this endpoint built?',
+    'Decoupled legacy billing monolith into microservice endpoint for Stripe/PayPal integration (Ref: Jira PAY-101).',
+    'JIRA_PAY101',
+    'HIGH'
+  );
+
+  // 5. Seed Entity Timeline History
+  console.log('--- Registering Entity Event Timelines ---');
+  insertEntityHistory(
+    'POST /v1/charge',
+    'CREATED',
+    '2025-01-15',
+    'rahul@codexa',
+    'Initial REST endpoint creation for payment microservice.'
+  );
+  insertEntityHistory(
+    'POST /v1/charge',
+    'INCIDENT',
+    '2026-03-10',
+    'pagerduty',
+    'Incident #482: Production gateway timeout during high-volume checkout.'
+  );
+
+  // 6. Build and start Fastify Server
   const server = buildServer();
   const PORT = 3000;
 
   try {
     await server.listen({ port: PORT });
-    console.log(`\n🚀 [Codexa Server Active]: Listening on http://localhost:${PORT}`);
-    console.log(`📌 Health Check: http://localhost:${PORT}/health`);
+    console.log(`\n🚀 [Codexa Engineering Memory Server Active]: http://localhost:${PORT}`);
     console.log(`📌 Webhook Endpoint: http://localhost:${PORT}/api/webhook\n`);
 
-    // Simulate sending a live GitHub Webhook POST request to our server
+    // Simulate sending a live GitHub Webhook POST request
     console.log('--- Simulating Incoming Webhook HTTP POST Request ---');
     const response = await server.inject({
       method: 'POST',
@@ -80,11 +115,11 @@ async function start() {
     console.log(`\n[Server Response Code]: ${response.statusCode}`);
     const resBody = JSON.parse(response.body);
     console.log(`[Analysis Summary]: Risk Level=${resBody.riskLevel}, Score=${resBody.riskScore}/100`);
-    console.log(`[Impact Summary]: ${resBody.impactedCallersCount} Affected Callers, ${resBody.matchedIncidentsCount} Matched Incidents`);
+    console.log('\n--- GENERATED GITHUB PR COMMENT WITH PHASE 7 MEMORY ---');
+    console.log(resBody.commentMarkdown);
 
-    console.log('\n--- SERVER WEBHOOK VERIFICATION SUCCESSFUL ---');
+    console.log('\n--- PHASE 7 DEEP MEMORY VERIFICATION SUCCESSFUL ---');
     
-    // Close server cleanly after verification test
     await server.close();
   } catch (err) {
     server.log.error(err);
