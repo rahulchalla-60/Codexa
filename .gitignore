@@ -4,5 +4,3 @@ dist/
 *.db
 .env
 .env.local
-
-mock_repos/*
